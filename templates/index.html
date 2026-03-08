@@ -1,0 +1,219 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Smart Health Habit Chatbot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="bg-orb orb-a"></div>
+  <div class="bg-orb orb-b"></div>
+
+  <main class="app-shell">
+    <section class="hero card">
+      <div>
+        <p class="eyebrow">Conversational Healthcare Assistant</p>
+        <h1>Smart Health Habit & Calorie Prediction</h1>
+        <p class="subcopy">Share your health update in natural language. The assistant extracts available data, predicts calories, and gives practical next steps.</p>
+      </div>
+      <div class="model-pill">
+        <span>Model Quality</span>
+        <small>{{ training_metrics.selected_model }}</small>
+        <strong>R2 {{ training_metrics.r2 }}</strong>
+        <strong>MAE {{ training_metrics.mae }}</strong>
+        <small>{{ training_metrics.rows }} rows</small>
+      </div>
+    </section>
+
+    <section class="content-grid">
+      <section class="chat-panel card">
+        <div class="panel-header">
+          <h2>Chat</h2>
+          <div class="panel-actions">
+            <select id="modelSelect" class="btn btn-secondary" title="Choose training model">
+              <option value="auto" selected>Auto Select</option>
+              {% for model_name in available_models %}
+              <option value="{{ model_name }}">{{ model_name }}</option>
+              {% endfor %}
+            </select>
+            <button id="resetBtn" type="button" class="btn btn-secondary">Reset Session</button>
+            <button id="retrainBtn" type="button" class="btn">Retrain Model</button>
+          </div>
+        </div>
+
+        <p class="hint">For best accuracy, include any you know: steps or distance, sleep hours, water intake, workout intensity, food intake, mood, and weight.</p>
+
+        <div class="prompt-chips" id="promptChips">
+          <button type="button" class="chip">Walked 5 km, slept 6 hours, weight 72kg, feeling tired</button>
+          <button type="button" class="chip">8000 steps, 2.5L water, moderate workout, light food</button>
+          <button type="button" class="chip">Not feeling happy today, slept late, no workout</button>
+        </div>
+
+        <div id="chatBox" class="chat-box" aria-live="polite"></div>
+
+        <form id="chatForm" class="chat-form">
+          <input id="messageInput" type="text" placeholder="Example: Walked 6k steps, slept 7 hrs, drank 2L water" autocomplete="off" required>
+          <button id="sendBtn" type="submit" class="btn">Send</button>
+        </form>
+      </section>
+
+      <aside class="insight-panel card">
+        <h2>Latest Summary</h2>
+        <div id="summaryEmpty" class="summary-empty">Send a message to view predicted calories, score, and recommendations.</div>
+        <div id="summaryContent" class="summary-content hidden">
+          <div class="stat-grid">
+            <article class="stat-card">
+              <span>Calories Burned</span>
+              <strong id="statCalories">-</strong>
+            </article>
+            <article class="stat-card">
+              <span>Health Score</span>
+              <strong id="statScore">-</strong>
+            </article>
+            <article class="stat-card">
+              <span>Net Balance</span>
+              <strong id="statNet">-</strong>
+            </article>
+          </div>
+          <h3>Recommendations</h3>
+          <ul id="recList" class="rec-list"></ul>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const chatBox = document.getElementById('chatBox');
+    const chatForm = document.getElementById('chatForm');
+    const messageInput = document.getElementById('messageInput');
+    const resetBtn = document.getElementById('resetBtn');
+    const retrainBtn = document.getElementById('retrainBtn');
+    const modelSelect = document.getElementById('modelSelect');
+    const sendBtn = document.getElementById('sendBtn');
+    const chips = document.getElementById('promptChips');
+
+    const summaryEmpty = document.getElementById('summaryEmpty');
+    const summaryContent = document.getElementById('summaryContent');
+    const statCalories = document.getElementById('statCalories');
+    const statScore = document.getElementById('statScore');
+    const statNet = document.getElementById('statNet');
+    const recList = document.getElementById('recList');
+
+    function addMsg(role, text, isLoading = false) {
+      const row = document.createElement('div');
+      row.className = `msg-row ${role}`;
+
+      const bubble = document.createElement('div');
+      bubble.className = `msg-bubble ${role}`;
+      bubble.textContent = text;
+
+      if (isLoading) {
+        bubble.classList.add('loading');
+      }
+
+      row.appendChild(bubble);
+      chatBox.appendChild(row);
+      chatBox.scrollTop = chatBox.scrollHeight;
+      return bubble;
+    }
+
+    function updateSummary(summary) {
+      summaryEmpty.classList.add('hidden');
+      summaryContent.classList.remove('hidden');
+
+      statCalories.textContent = summary.predicted_calories != null ? `${summary.predicted_calories} kcal` : '-';
+      statScore.textContent = summary.health_score != null ? `${summary.health_score}/100` : '-';
+      statNet.textContent = summary.net_balance != null ? `${summary.net_balance} kcal` : '-';
+
+      recList.innerHTML = '';
+      const recs = summary.recommendations || [];
+      if (!recs.length) {
+        const li = document.createElement('li');
+        li.textContent = 'No recommendations available yet.';
+        recList.appendChild(li);
+      } else {
+        recs.slice(0, 5).forEach((rec) => {
+          const li = document.createElement('li');
+          li.textContent = rec;
+          recList.appendChild(li);
+        });
+      }
+    }
+
+    async function sendMessage(message) {
+      addMsg('user', message);
+      const loadingBubble = addMsg('bot', 'Analyzing your update...', true);
+      sendBtn.disabled = true;
+
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message })
+        });
+
+        const payload = await response.json();
+        loadingBubble.parentElement.remove();
+
+        if (!response.ok) {
+          addMsg('bot', payload.error || 'Request failed');
+          return;
+        }
+
+        addMsg('bot', payload.bot_reply);
+        if (payload.summary) {
+          updateSummary(payload.summary);
+        }
+      } catch (error) {
+        loadingBubble.parentElement.remove();
+        addMsg('bot', 'Unable to reach the server right now. Please try again.');
+      } finally {
+        sendBtn.disabled = false;
+      }
+    }
+
+    chatForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const message = messageInput.value.trim();
+      if (!message) return;
+      messageInput.value = '';
+      await sendMessage(message);
+    });
+
+    chips.addEventListener('click', (event) => {
+      if (!event.target.classList.contains('chip')) return;
+      messageInput.value = event.target.textContent;
+      messageInput.focus();
+    });
+
+    resetBtn.addEventListener('click', async () => {
+      const response = await fetch('/api/reset', { method: 'POST' });
+      const payload = await response.json();
+      addMsg('bot', payload.message || 'Session reset.');
+      summaryContent.classList.add('hidden');
+      summaryEmpty.classList.remove('hidden');
+    });
+
+    retrainBtn.addEventListener('click', async () => {
+      const response = await fetch('/api/retrain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selected_model: modelSelect.value })
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        addMsg('bot', payload.error || 'Model retrain failed.');
+        return;
+      }
+      const modelName = payload.metrics.selected_model || 'Best model';
+      addMsg('bot', `Model retrained. ${modelName} selected. R2 ${payload.metrics.r2.toFixed(3)}, MAE ${payload.metrics.mae.toFixed(2)}.`);
+    });
+
+    addMsg('bot', 'Tell me about your day and I will generate your health summary.');
+  </script>
+</body>
+</html>
