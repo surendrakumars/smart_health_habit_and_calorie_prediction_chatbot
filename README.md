@@ -75,32 +75,6 @@ The model was trained using a dataset containing lifestyle and activity informat
 
 The dataset helps the model learn patterns between daily habits and calorie expenditure.
 
----
-
-## Project Structure
-
-```
-smart_health_habit_and_calorie_prediction_chatbot
-│
-├── app.py
-├── model.pkl
-├── dataset.csv
-│
-├── templates
-│   └── index.html
-│
-├── static
-│   ├── style.css
-│   └── script.js
-│
-├── utils
-│   └── feature_extraction.py
-│
-└── README.md
-```
-
----
-
 ## Installation
 
 Clone the repository
